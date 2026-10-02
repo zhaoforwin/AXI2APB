@@ -1,19 +1,18 @@
-# AXI5-Lite 到 APB4 桥电路说明
+# AXI5-Lite 到 APB4 桥电路待测RTL说明
 
-本实现以你上传的 `axilite2apb(1).v` 为基础，补齐其中的 `axi4_lite_slave` 和 `apb_master`，并给顶层增加 AXI5-Lite 必需的 ID、SIZE 接口。原有 31 个顶层端口的名字、方向和位宽保持不变；两个子模块名以及内部 `req_* / rsp_*` 接口名也保持不变。
 
 桥采用同一个时钟、32 位地址和 32 位数据。AXI 主控提交请求，AXI 子模块缓存并仲裁请求，APB 子模块访问外部寄存器，再由 AXI 子模块返回响应。
 
 ## 1. 协议版本与文件
 
-这里的 AMBA5 实现具体指 **AXI5-Lite 从接口**。APB 侧按照你提供的 IHI 0024C 文档实现 **APB4 主接口**。AMBA 的体系版本、AXI 的接口版本和 APB 的接口版本需要分别说明，不能把它们统一改名为“5”。
+这里的 AMBA5 实现具体指 **AXI5-Lite 从接口**。APB 按照 IHI 0024C 文档实现 **APB4 主接口**。AMBA 的体系版本、AXI 的接口版本和 APB 的接口版本需要分别说明
 
 | 协议依据 | 本实现采用的内容 |
 | --- | --- |
 | `IHI0022G_amba_axi_protocol_spec(1).pdf`，Part A / Part C，尤其 C2.6、C2.7 | 通道握手、AXI5-Lite 单拍传输、ID 返回、SIZE 与写 strobe |
 | `IHI0024C_amba_apb_protocol_v2_0_spec(1).pdf`，1.2.3、3.2、3.4、Chapter 4 | APB4 的 PPROT/PSTRB、等待、错误响应与 SETUP/ACCESS 状态 |
 
-你提供的 AHB5 文档对应 AHB 接口。本桥采用 AXI 和 APB，不包含 AHB 电路。
+
 
 | 文件 | 作用 |
 | --- | --- |
@@ -23,34 +22,6 @@
 
 AXI5-Lite 本身是单拍接口。本实现选择按序返回响应，最多缓存一个写请求和一个读请求，并依次访问 APB。AXI5 的突发、原子操作以及可选的唤醒、毒化、校验、跟踪接口不在本接口配置中。
 
-## 2. 顶层新增的接口
-
-现有 `s_axi_*`、`m_apb_*`、`aclk`、`aresetn` 名字全部保留，只新增下列六个端口和 `ID_WIDTH` 参数：
-
-| 新增端口 | 方向 | 位宽 | 作用 |
-| --- | --- | --- | --- |
-| `s_axi_awid` | 输入 | `ID_WIDTH` | 写请求 ID，在 AW 握手时锁存 |
-| `s_axi_awsize` | 输入 | 3 | 写访问字节数的编码，在 AW 握手时锁存 |
-| `s_axi_bid` | 输出 | `ID_WIDTH` | 返回对应请求的 AWID |
-| `s_axi_arid` | 输入 | `ID_WIDTH` | 读请求 ID，在 AR 握手时锁存 |
-| `s_axi_arsize` | 输入 | 3 | 读访问字节数的编码，在 AR 握手时锁存 |
-| `s_axi_rid` | 输出 | `ID_WIDTH` | 返回对应请求的 ARID |
-
-`ID_WIDTH` 默认为 4，可根据主控配置为其他正整数。子模块参数 `id_width` 随顶层配置。
-原有 `addr_width / data_width / strb_width` 参数保留，以匹配原来的实例化方式；本桥的数据配置固定为 `data_width=32、strb_width=4`。子模块允许地址宽度至少为 3，配套顶层固定为 32。
-
-如果先用旧 AXI4-Lite 激励检查整字寄存器访问，将新增输入接成：
-
-```verilog
-.s_axi_awid   (4'b0000),
-.s_axi_awsize (3'b010),
-.s_axi_arid   (4'b0000),
-.s_axi_arsize (3'b010)
-```
-
-这里假定 `ID_WIDTH=4`；修改 ID 宽度后需要同步调整常量。`BID/RID` 应连接到主控或验证接口。
-
-`AWPROT/ARPROT` 保持三位接口，并原样传递给 `PPROT`。AXI5-Lite 中具有协议含义的是其中的安全属性位 `[1]`；本配置建议将未使用的 `[2]`、`[0]` 驱动为 0。
 
 ## 3. AXI 从接口怎样工作
 
