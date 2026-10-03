@@ -1,0 +1,20 @@
+`timescale 1ns/1ps
+`include "x2p_defs.svh"
+package x2p_pkg;
+  import uvm_pkg::*;
+  `include "uvm_macros.svh"
+  `include "x2p_config.sv"
+  `include "x2p_transaction.sv"
+  `include "x2p_axi_sequencer.sv"
+  `include "x2p_axi_driver.sv"
+  `include "x2p_axi_monitor.sv"
+  `include "x2p_axi_agent.sv"
+  `include "x2p_apb_driver.sv"
+  `include "x2p_apb_monitor.sv"
+  `include "x2p_apb_agent.sv"
+  `include "x2p_refmodel.sv"
+  `include "x2p_scoreboard.sv"
+  `include "x2p_env.sv"
+  `include "x2p_directed_sequence.sv"
+  `include "x2p_test.sv"
+endpackage
