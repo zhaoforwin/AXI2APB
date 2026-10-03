@@ -1,6 +1,8 @@
 VCS ?= vcs
 PYTHON ?= python3
 CASE ?= 0
+SEED ?= 1
+RANDOM_ITERS ?= 64
 ID_WIDTH ?= 4
 FSDB ?= 0
 COV ?= 0
@@ -25,7 +27,7 @@ VCS_OPTS += -cm line+cond+tgl+branch+assert -cm_dir x2p.vdb
 SIM_OPTS += -cm line+cond+tgl+branch+assert -cm_dir x2p.vdb
 endif
 
-.PHONY: all compile run smoke regress verdi clean
+.PHONY: all compile run smoke added regress regress_new verdi clean
 all: run
 
 # Changing ID_WIDTH / FSDB / COV needs 'make clean' before rebuilding.
@@ -34,18 +36,27 @@ simv: $(wildcard ../tb/*.sv ../tb/*.svh ../rtl/*.v ../sva/*.sv) filelist.f Makef
 
 compile: simv
 run: simv
-	./simv $(SIM_OPTS) +CASE=$(CASE) $(RUN_ARGS) -l sim.log
+	./simv $(SIM_OPTS) +CASE=$(CASE) +ntb_random_seed=$(SEED) \
+	       +RANDOM_ITERS=$(RANDOM_ITERS) $(RUN_ARGS) -l sim.log
 	$(PYTHON) ../scripts/check_log.py sim.log
 
 smoke:
 	$(MAKE) run CASE=2
 
+added:
+	$(MAKE) run CASE=0 RUN_ARGS="$(RUN_ARGS) +X2P_NEW_ONLY"
+
 regress: simv
-	$(PYTHON) ../scripts/regress.py --simv ./simv --output regress
+	$(PYTHON) ../scripts/regress.py --simv ./simv --output regress \
+	          --seed $(SEED) --random-iters $(RANDOM_ITERS)
+
+regress_new: simv
+	$(PYTHON) ../scripts/regress.py --simv ./simv --output regress_new \
+	          --cases 21,22,23,24,25,26,27,28 --seed $(SEED) --random-iters $(RANDOM_ITERS)
 
 verdi: simv
 	$(VERDI) -dbdir simv.daidir -ssf $(WAVE) &
 
 clean:
 	rm -rf simv simv.daidir csrc ucli.key compile.log sim.log \
-	       x2p.vcd x2p.fsdb x2p.vdb regress novas.conf novas.rc verdiLog
+	       x2p.vcd x2p.fsdb x2p.vdb regress regress_new novas.conf novas.rc verdiLog
