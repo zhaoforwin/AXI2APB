@@ -40,7 +40,8 @@ class x2p_directed_sequence extends uvm_sequence #(x2p_transaction);
     finish_item(t);
   endtask
   task do_rw(string label, logic [31:0] wr_addr, logic [31:0] wr_data,
-             logic [31:0] rd_addr, int b_delay=0, int r_delay=0);
+             logic [31:0] rd_addr, int b_delay=0, int r_delay=0,
+             int waits=0, int aw_delay=0, int w_delay=0, int ar_delay=0);
     x2p_transaction t;
     t=x2p_transaction::type_id::create(label);
     start_item(t);
@@ -48,7 +49,201 @@ class x2p_directed_sequence extends uvm_sequence #(x2p_transaction);
     t.addr=wr_addr; t.data=wr_data; t.strb=4'hf; t.id=5;
     t.rd_addr=rd_addr; t.rd_id=9;
     t.b_delay=b_delay; t.r_delay=r_delay;
+    t.apb_wait_cycles=waits;
+    t.aw_delay=aw_delay; t.w_delay=w_delay; t.ar_delay=ar_delay;
     finish_item(t);
+  endtask
+
+  // TC21：多种数据模式、多个地址、写后读回。
+  task basic_patterns();
+    logic [31:0] patterns[8]='{32'h0,32'hffffffff,32'h55555555,32'haaaaaaaa,
+       32'ha5a55a5a,32'h5a5aa5a5,32'h80000000,32'h00000001};
+    for (int i=0;i<8;i++) begin
+      do_write($sformatf("TC21_pattern%0d_addr0",i),32'h10,patterns[i],.id(i));
+      do_write($sformatf("TC21_pattern%0d_addr1",i),32'h14,~patterns[i],.id(i));
+      do_read($sformatf("TC21_read%0d_addr0",i),32'h10,.id(i));
+      do_read($sformatf("TC21_read%0d_addr1",i),32'h14,.id(i));
+    end
+  endtask
+
+  // TC22：真正的 rand/constraint 随机化，不依赖手工枚举的数据。
+  task constrained_random();
+    x2p_transaction t;
+    do_write("TC22_seed",32'h20,32'h12345678);
+    do_read("TC22_seed_read",32'h20);
+    for (int i=0;i<cfg.random_iters;i++) begin
+      t=x2p_transaction::type_id::create($sformatf("TC22_random_%0d",i));
+      start_item(t);
+      if (!t.randomize() with {
+        addr inside {[32'h0:32'hc0]};
+        size inside {[0:2]};
+        b_delay inside {0,1,7,15};
+        r_delay inside {0,1,7,15};
+        apb_wait_cycles inside {0,1,3,8};
+      }) `uvm_fatal("RAND_FAIL","TC22 约束随机化失败")
+      t.cmd=t.write?X2P_WRITE:X2P_READ;
+      t.label=$sformatf("TC22_random_%0d",i);
+      `uvm_info("RAND_ITEM",
+        $sformatf("%s %s addr=%08h size=%0d strb=%h id=%h aw/w/ar=%0d/%0d/%0d wait=%0d B/R=%0d/%0d",
+          t.label,t.write?"W":"R",t.addr,t.size,t.strb,t.id,t.aw_delay,
+          t.w_delay,t.ar_delay,t.apb_wait_cycles,t.b_delay,t.r_delay),UVM_MEDIUM)
+      finish_item(t);
+      if (t.write)
+        do_read($sformatf("TC22_readback_%0d",i),{t.addr[31:2],2'b00},
+                .id(t.id),.waits(t.apb_wait_cycles),.r_delay(t.r_delay));
+    end
+  endtask
+
+  // TC23：首尾寄存器的每个字节通道、半字和随机边界访问。
+  task boundary_transfers();
+    x2p_transaction t;
+    for (int lane=0;lane<4;lane++) begin
+      do_write($sformatf("TC23_first_byte%0d",lane),32'h0+lane,
+               (32'h80+lane)<<(8*lane),.strb(4'b0001<<lane),.size(0));
+      do_read($sformatf("TC23_first_read%0d",lane),32'h0+lane,.size(0));
+      do_write($sformatf("TC23_last_byte%0d",lane),32'hfc+lane,
+               (32'h90+lane)<<(8*lane),.strb(4'b0001<<lane),.size(0));
+      do_read($sformatf("TC23_last_read%0d",lane),32'hfc+lane,.size(0));
+    end
+    do_write("TC23_first_low_half",32'h0,32'h00001234,.strb(3),.size(1));
+    do_write("TC23_first_high_half",32'h2,32'h56780000,.strb(12),.size(1));
+    do_write("TC23_last_low_half",32'hfc,32'h0000abcd,.strb(3),.size(1));
+    do_write("TC23_last_high_half",32'hfe,32'hef010000,.strb(12),.size(1));
+    do_read("TC23_first_word",32'h0);
+    do_read("TC23_last_word",32'hfc);
+    for (int i=0;i<32;i++) begin
+      t=x2p_transaction::type_id::create($sformatf("TC23_random_edge_%0d",i));
+      // 禁用 soft 默认集合，让 0xFD..0xFF 和 wait=7 也可被选中。
+      t.c_default.constraint_mode(0);
+      start_item(t);
+      if (!t.randomize() with {
+        write==1;
+        addr inside {32'h0,32'h1,32'h2,32'h3,32'hf8,32'hf9,32'hfa,32'hfb,
+                     32'hfc,32'hfd,32'hfe,32'hff};
+        size inside {[0:2]};
+        prot inside {3'b000,3'b010};
+        aw_delay inside {0,3}; w_delay inside {0,3};
+        ar_delay==0; r_delay==0;
+        b_delay inside {0,7}; apb_wait_cycles inside {0,1,7};
+      }) `uvm_fatal("RAND_FAIL","TC23 边界约束随机化失败")
+      t.cmd=X2P_WRITE; t.label=$sformatf("TC23_random_edge_%0d",i);
+      finish_item(t);
+      do_read($sformatf("TC23_edge_readback_%0d",i),{t.addr[31:2],2'b00},
+              .id(t.id),.waits(t.apb_wait_cycles),.r_delay(7));
+    end
+  endtask
+
+  // TC24：完整 BREADY/RREADY 延迟组合，伴随 AW/W 分离和 APB 等待。
+  task ready_backpressure();
+    int delays[4]='{0,1,7,15};
+    do_write("TC24_read_seed",32'h94,32'h24681357);
+    for (int b=0;b<4;b++)
+      for (int r=0;r<4;r++) begin
+        do_rw($sformatf("TC24_B%0d_R%0d",delays[b],delays[r]),
+              32'h90,32'h60000000+(b<<8)+r,32'h94,
+              .b_delay(delays[b]),.r_delay(delays[r]),.waits(8),
+              .aw_delay(b%2?3:0),.w_delay(b%2?0:3));
+        do_read($sformatf("TC24_verify_B%0d_R%0d",b,r),32'h90,.r_delay(1));
+      end
+  endtask
+
+  // TC25：长 ACCESS 等待及两方向等待的串行累积。
+  task pready_long_wait();
+    int delays[5]='{0,1,7,15,31};
+    for (int i=0;i<5;i++) begin
+      do_write($sformatf("TC25_wait%0d_write",delays[i]),32'ha0,
+               32'hf0000000+i,.waits(delays[i]),.b_delay(3));
+      do_read($sformatf("TC25_wait%0d_read",delays[i]),32'ha0,
+              .waits(delays[i]),.r_delay(1));
+    end
+    do_write("TC25_pair_read_seed",32'ha4,32'h0f0f0f0f);
+    do_rw("TC25_pair_wait31",32'ha0,32'haa55aa55,32'ha4,
+          .b_delay(15),.r_delay(15),.waits(31));
+    do_read("TC25_pair_write_readback",32'ha0);
+  endtask
+
+  // TC26：非法地址不丢高位、不别名到合法寄存器，错误后继续正常访问。
+  task invalid_address_decode();
+    logic [31:0] bad_addr[5]='{32'h100,32'h104,32'h1fc,32'hffff0000,32'hfffffffc};
+    do_write("TC26_guard0",32'h0,32'h11223344);
+    do_write("TC26_guard1",32'h4,32'h55667788);
+    do_write("TC26_guard_last",32'hfc,32'haabbccdd);
+    for (int i=0;i<5;i++) begin
+      do_write($sformatf("TC26_bad_write%0d",i),bad_addr[i],32'hdead0000+i,
+               .id(14),.waits(15),.b_delay(7));
+      do_read($sformatf("TC26_bad_read%0d",i),bad_addr[i],
+              .id(15),.waits(7),.r_delay(1));
+      do_read($sformatf("TC26_no_alias0_%0d",i),32'h0);
+      do_read($sformatf("TC26_no_alias1_%0d",i),32'h4);
+      do_read($sformatf("TC26_no_alias_last_%0d",i),32'hfc);
+    end
+    // 与 APB 非法地址错误区别：SIZE 拒绝必须完全没有 APB 访问。
+    do_write("TC26_local_SIZE_error",32'h100,32'hffffffff,
+             .size(7),.id(15),.waits(31),.b_delay(7));
+    do_read("TC26_local_SIZE_read",32'h100,
+            .size(7),.id(15),.waits(31),.r_delay(7));
+  endtask
+
+  // TC27：两个错误并发、错误/成功混合、延迟错误响应及恢复。
+  task pslverr_return();
+    int delays[3]='{0,7,31};
+    do_write("TC27_normal_seed",32'h84,32'h76543210);
+    for (int i=0;i<3;i++) begin
+      do_rw($sformatf("TC27_both_errors_wait%0d",delays[i]),
+            32'he0,32'hffffffff,32'he4,
+            .b_delay(7),.r_delay(15),.waits(delays[i]));
+      do_read($sformatf("TC27_error_write_unchanged%0d",i),32'he0);
+    end
+    do_rw("TC27_write_error_read_ok",32'he0,32'hffffffff,32'h84,
+          .b_delay(15),.r_delay(1),.waits(7));
+    do_rw("TC27_write_ok_read_error",32'he4,32'hcafebabe,32'he4,
+          .b_delay(1),.r_delay(15),.waits(15));
+    do_write("TC27_recover_write",32'hb0,32'hdecafbad);
+    do_read("TC27_recover_read",32'hb0);
+  endtask
+
+  // TC28：每个指定阶段重复复位，随机 1..8 拍脉宽，复位后重新访问。
+  task reset_exceptions();
+    int saved_reset_cycles;
+    x2p_abort_e point;
+    saved_reset_cycles=cfg.reset_cycles;
+    for (int stage=1;stage<=6;stage++)
+      for (int rep=0;rep<2;rep++) begin
+        cfg.reset_cycles=$urandom_range(8,1);
+        if (stage==1 && rep==0) cfg.reset_cycles=1;
+        if (stage==2 && rep==0) cfg.reset_cycles=8;
+        do_write($sformatf("TC28_seed_stage%0d_rep%0d",stage,rep),
+                 32'h20,32'h12340000+stage*16+rep);
+        case(stage)
+          1: do_write("TC28_AW_only",32'h20,32'hffffffff,.w_delay(30),
+                      .waits(31),.b_delay(15),.abort_at(X2P_AFTER_AW));
+          2: do_write("TC28_W_only",32'h20,32'hffffffff,.aw_delay(30),
+                      .waits(31),.b_delay(15),.abort_at(X2P_AFTER_W));
+          3,4: begin
+            point=(stage==3)?X2P_AT_SETUP:X2P_AT_WAIT;
+            if (rep==0)
+              do_write("TC28_APB_write",32'h20,32'hffffffff,
+                       .waits(31),.b_delay(15),.abort_at(point));
+            else
+              do_read("TC28_APB_read",32'h20,
+                      .waits(31),.r_delay(15),.abort_at(point));
+          end
+          5: do_write("TC28_B_response",32'h20,32'hffffffff,
+                      .waits(31),.b_delay(15),.abort_at(X2P_AT_B_STALL));
+          6: do_read("TC28_R_response",32'h20,
+                     .waits(31),.r_delay(15),.abort_at(X2P_AT_R_STALL));
+          default: `uvm_fatal("BAD_STAGE","TC28 无效阶段")
+        endcase
+        do_read($sformatf("TC28_zero_stage%0d_rep%0d",stage,rep),32'h20);
+        do_write($sformatf("TC28_recover_stage%0d_rep%0d",stage,rep),
+                 32'h20,32'h80000000+stage*16+rep,.waits(7),.b_delay(1));
+        do_read($sformatf("TC28_readback_stage%0d_rep%0d",stage,rep),
+                32'h20,.waits(7),.r_delay(7));
+      end
+    cfg.reset_cycles=saved_reset_cycles;
+    do_reset("TC28_repeated_idle_reset0");
+    do_reset("TC28_repeated_idle_reset1");
+    do_read("TC28_final_zero",32'h20);
   endtask
 
   task run_case(int tc);
@@ -192,7 +387,15 @@ class x2p_directed_sequence extends uvm_sequence #(x2p_transaction);
         do_read("TC20_R_reset",32'h20,.r_delay(12),.abort_at(X2P_AT_R_STALL));
         do_read("TC20_after_R_reset",32'h20);
       end
-      default: `uvm_fatal("BAD_CASE","CASE 必须为 0..20")
+      21: basic_patterns();
+      22: constrained_random();
+      23: boundary_transfers();
+      24: ready_backpressure();
+      25: pready_long_wait();
+      26: invalid_address_decode();
+      27: pslverr_return();
+      28: reset_exceptions();
+      default: `uvm_fatal("BAD_CASE","CASE 必须为 0..28")
     endcase
     `uvm_info("CASE_END",$sformatf("TC%02d stimulus completed",tc),UVM_LOW)
   endtask
@@ -201,7 +404,7 @@ class x2p_directed_sequence extends uvm_sequence #(x2p_transaction);
     if (cfg == null) `uvm_fatal("NO_CFG","sequence 缺少 cfg")
     do_reset("initial_reset");
     if (cfg.case_select == 0)
-      for (int tc=1;tc<=20;tc++) run_case(tc);
+      for (int tc=(cfg.new_only?21:1);tc<=28;tc++) run_case(tc);
     else run_case(cfg.case_select);
   endtask
 endclass

@@ -11,8 +11,12 @@ class x2p_test extends uvm_test;
     if (!uvm_config_db#(x2p_vif_t)::get(this,"","vif",cfg.vif))
       `uvm_fatal("NO_VIF","top 未绑定 x2p_interface")
     void'($value$plusargs("CASE=%d",cfg.case_select));
-    if (cfg.case_select<0 || cfg.case_select>20)
-      `uvm_fatal("BAD_CASE","CASE 必须为 0..20")
+    void'($value$plusargs("RANDOM_ITERS=%d",cfg.random_iters));
+    cfg.new_only=$test$plusargs("X2P_NEW_ONLY");
+    if (cfg.case_select<0 || cfg.case_select>28)
+      `uvm_fatal("BAD_CASE","CASE 必须为 0..28")
+    if (cfg.random_iters<1 || cfg.random_iters>256)
+      `uvm_fatal("BAD_ITERS","RANDOM_ITERS 必须为 1..256")
     uvm_config_db#(x2p_config)::set(this,"env*","cfg",cfg);
     env=x2p_env::type_id::create("env",this);
   endfunction

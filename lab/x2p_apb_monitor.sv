@@ -14,6 +14,7 @@ class x2p_apb_monitor extends uvm_monitor;
     cp_write: coverpoint wr;
     cp_wait: coverpoint waits {
       bins zero = {0}; bins one = {1}; bins three = {3}; bins eight = {8};
+      bins seven = {7}; bins fifteen = {15}; bins thirty_one = {31};
       bins others = default;
     }
     cp_error: coverpoint err;

@@ -30,6 +30,7 @@ class x2p_scoreboard extends uvm_scoreboard;
     }
     cp_stalls: coverpoint stalls {
       bins zero = {0}; bins three = {3}; bins eight = {8}; bins others = default;
+      bins one = {1}; bins seven = {7}; bins fifteen = {15};
     }
     rw_resp: cross cp_write, cp_resp;
     rw_size: cross cp_write, cp_size;
@@ -64,6 +65,12 @@ class x2p_scoreboard extends uvm_scoreboard;
            (e.resp === a.resp) && (e.write || e.data === a.data);
     if (e.apb_cycle != 0 && a.completed_cycle <= e.apb_cycle) good = 0;
     if (a.completed_cycle < e.accepted_cycle) good = 0;
+    if (a.stall_cycles != (e.write ? e.b_delay : e.r_delay)) begin
+      `uvm_error("READY_STALL",
+        $sformatf("%s 反压 exp=%0d act=%0d",e.write?"B":"R",
+                  e.write?e.b_delay:e.r_delay,a.stall_cycles))
+      good = 0;
+    end
     compared_count++;
     if (good) begin
       pass_count++;

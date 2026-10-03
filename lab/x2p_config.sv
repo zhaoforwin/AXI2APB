@@ -9,9 +9,12 @@ class x2p_config extends uvm_object;
   `uvm_object_utils(x2p_config)
   x2p_vif_t vif;
   int unsigned apb_wait_cycles = 0;
-  int unsigned item_timeout = 100;
+  int unsigned b_stall_cycles = 0, r_stall_cycles = 0;
+  int unsigned item_timeout = 256;
   int unsigned reset_cycles = 4;
-  int case_select = 0;  // 0=全部；1..20=单独一组。
+  int case_select = 0;  // 0=全部；1..28=单独一组。
+  int unsigned random_iters = 64;
+  bit new_only = 0;
   function new(string name="x2p_config");
     super.new(name);
   endfunction

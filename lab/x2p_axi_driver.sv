@@ -265,6 +265,8 @@ class x2p_axi_driver extends uvm_driver #(x2p_transaction);
     forever begin
       seq_item_port.get_next_item(req);
       cfg.apb_wait_cycles = req.apb_wait_cycles;
+      cfg.b_stall_cycles = req.b_delay;
+      cfg.r_stall_cycles = req.r_delay;
       if (req.cmd == X2P_RESET) begin
         @(vif.axi_drv_cb);
         reset_now();

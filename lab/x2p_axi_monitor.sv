@@ -8,9 +8,18 @@ class x2p_axi_monitor extends uvm_monitor;
   longint unsigned cycle;
   int unsigned aw_count, w_count, ar_count, b_count, r_count;
   int unsigned aborted_partial, aborted_requests;
+  protected int unsigned reset_low_cycles;
+  covergroup reset_len_cg with function sample(int low_cycles);
+    option.per_instance = 1;
+    cp_length: coverpoint low_cycles {
+      bins one = {1}; bins four = {4}; bins eight = {8};
+      bins middle = {2,3,5,6,7}; bins other = default;
+    }
+  endgroup
 
   function new(string name, uvm_component parent);
     super.new(name, parent);
+    reset_len_cg=new();
   endfunction
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
@@ -75,6 +84,7 @@ class x2p_axi_monitor extends uvm_monitor;
       t = a.duplicate("write_request");
       t.cmd = X2P_WRITE; t.stage = X2P_REQUEST; t.write = 1;
       t.data = w.data; t.strb = w.strb;
+      t.b_delay = cfg.b_stall_cycles;
       t.ordinal = wr_ordinal++;
       t.aw_w_order = (a.accepted_cycle < w.accepted_cycle) ? -1 :
                      (a.accepted_cycle > w.accepted_cycle) ? 1 : 0;
@@ -92,6 +102,7 @@ class x2p_axi_monitor extends uvm_monitor;
       t.size = vif.mon_cb.s_axi_arsize;
       t.prot = vif.mon_cb.s_axi_arprot;
       t.strb = 0; t.data = 0;
+      t.r_delay = cfg.r_stall_cycles;
       t.epoch = vif.mon_cb.epoch;
       t.ordinal = rd_ordinal++;
       t.accepted_cycle = cycle;
@@ -106,9 +117,18 @@ class x2p_axi_monitor extends uvm_monitor;
   task sample_responses();
     x2p_transaction t;
     if (vif.mon_cb.s_axi_bvalid === 1'b1 &&
-        vif.mon_cb.s_axi_bready === 1'b0) b_stalls++;
+        vif.mon_cb.s_axi_bready === 1'b0) begin
+      b_stalls++;
+      if (vif.mon_cb.s_axi_awready !== 1'b0 ||
+          vif.mon_cb.s_axi_wready !== 1'b0)
+        `uvm_error("WRITE_READY", "当前单槽 DUT 在 B 反压中提前释放 AW/W 缓存")
+    end
     if (vif.mon_cb.s_axi_rvalid === 1'b1 &&
-        vif.mon_cb.s_axi_rready === 1'b0) r_stalls++;
+        vif.mon_cb.s_axi_rready === 1'b0) begin
+      r_stalls++;
+      if (vif.mon_cb.s_axi_arready !== 1'b0)
+        `uvm_error("READ_READY", "当前单槽 DUT 在 R 反压中提前释放 AR 缓存")
+    end
     if (vif.mon_cb.s_axi_bvalid === 1'b1 &&
         vif.mon_cb.s_axi_bready === 1'b1) begin
       if (!wr_q.size()) begin
@@ -151,8 +171,19 @@ class x2p_axi_monitor extends uvm_monitor;
       @(vif.mon_cb);
       cycle++;
       if (vif.mon_cb.aresetn !== 1'b1) begin
+        reset_low_cycles++;
+        if (vif.mon_cb.aresetn === 1'b0 &&
+            {vif.mon_cb.s_axi_awready,vif.mon_cb.s_axi_wready,
+             vif.mon_cb.s_axi_arready,vif.mon_cb.s_axi_bvalid,
+             vif.mon_cb.s_axi_rvalid,vif.mon_cb.m_apb_psel,
+             vif.mon_cb.m_apb_penable} !== 7'b0)
+          `uvm_error("RESET_LEVEL","复位采样拍的 DUT READY/VALID/PSEL/PENABLE 未清零")
         clear_pending();
       end else begin
+        if (reset_low_cycles!=0) begin
+          reset_len_cg.sample(reset_low_cycles);
+          reset_low_cycles=0;
+        end
         sample_requests();
         sample_responses();
         check_age();
@@ -163,5 +194,7 @@ class x2p_axi_monitor extends uvm_monitor;
     `uvm_info("AXI_COUNTS",
       $sformatf("AW=%0d W=%0d AR=%0d B=%0d R=%0d aborted_partial=%0d aborted_requests=%0d",
       aw_count,w_count,ar_count,b_count,r_count,aborted_partial,aborted_requests), UVM_LOW)
+    `uvm_info("RESET_LENGTH_COVERAGE",
+      $sformatf("coverage=%.2f%%",reset_len_cg.get_inst_coverage()),UVM_LOW)
   endfunction
 endclass
