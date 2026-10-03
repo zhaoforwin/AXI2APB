@@ -5,7 +5,7 @@
 
 ## 1. 协议版本与文件
 
-这里的 AMBA5 实现具体指 **AXI5-Lite 从接口**。APB 按照 IHI 0024C 文档实现 **APB4 主接口**。AMBA 的体系版本、AXI 的接口版本和 APB 的接口版本需要分别说明
+实现**AXI5-Lite 从接口**。APB 按照 IHI 0024C 文档实现 **APB4 主接口**。
 
 | 协议依据 | 本实现采用的内容 |
 | --- | --- |
@@ -106,17 +106,6 @@ APB 出错时，读数据不能作为有效业务数据使用。地址译码、�
 
 复位清除请求缓存、响应寄存器以及当前 APB 状态。已经在从设备中完成的写操作不会由桥回滚，因此桥和从设备应使用协调的复位策略。桥不提供跨时钟域处理，也不设置 PREADY 等待超时。
 
-## 7. 编译与实际检查
-
-将三个 RTL 文件一起加入工程，顶层模块名仍为 `axilite2apb`。例如 VCS 的 RTL 编译检查：
-
-```bash
-vcs -full64 -sverilog axi4_lite_slave.v apb_master.v axilite2apb.v -top axilite2apb -o simv
-```
-
-功能仿真时，应把工程顶层切换为你的 testbench，由 testbench 提供时钟、复位、AXI 激励和 APB 返回信号。
-
-本次实际使用 Icarus Verilog 12.0 检查，结果如下：
 
 | 检查 | 结果 |
 | --- | --- |
